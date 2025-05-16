@@ -27,7 +27,7 @@ repos:
     hooks:
       - id: insert-license
         name: Insert Apache 2.0 license headers into go files
-        files: '.*\.(go|mod|sum)$'
+        files: '.*\.(go)$'
         args:
           - --detect-license-in-X-top-lines=15
           - --license-filepath
