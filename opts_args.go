@@ -12,6 +12,7 @@ import (
 	fnapi "github.com/crossplane/function-sdk-go/proto/v1"
 	"github.com/crossplane/function-sdk-go/resource"
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/encoding/protojson"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -146,15 +147,51 @@ func WithObservedResourcesYAML(rawYAML []byte) TestFunctionOpt {
 			}
 			meta.RemoveAnnotations(u, AnnotationKeyResourceName)
 
-			// secretKey, exists := u.GetAnnotations()[AnnotationKeyResourceName+"-connection-secret"]
-			// if exists && secretKey == key {
-			// 	u
-			// }
-
 			str := mustObjectAsStruct(u)
 			tc.req.Observed.Resources[key] = &fnapi.Resource{
 				Resource: str,
 				// ConnectionDetails: str.GetFields()["connectionDetails"],
+			}
+		}
+	}
+}
+
+// WithObservedResourcesYAMLOverride loads the given objects from YAML and
+// merges them with existing observed objects.
+// It only modifies resources that are already observed.
+func WithObservedResourcesYAMLOverride(rawYAML []byte) TestFunctionOpt {
+	return func(tc *FunctionTest) {
+		if tc.req.GetObserved() == nil || len(tc.req.GetObserved().GetResources()) == 0 {
+			return
+		}
+		uList, err := yaml.UnmarshalObjects[*unstructured.Unstructured](rawYAML)
+		if err != nil {
+			panic(err.Error())
+		}
+		for _, u := range uList {
+			key := GetTestResourceName(u)
+			if key == "" {
+				panic(fmt.Sprintf("resource has no name annotation: %s/%s", u.GroupVersionKind().String(), u.GetName()))
+			}
+			meta.RemoveAnnotations(u, AnnotationKeyResourceName)
+
+			observedRes, hasObservedResource := tc.req.GetObserved().GetResources()[key]
+			if !hasObservedResource {
+				panic(fmt.Sprintf("tried to override observed resource %s, which was not observed yet", key))
+			}
+			resRaw, err := protojson.Marshal(observedRes.GetResource())
+			if err != nil {
+				panic(errors.Wrap(err, key).Error())
+			}
+			original := map[string]interface{}{}
+			if err := json.Unmarshal(resRaw, &original); err != nil {
+				panic(errors.Wrap(err, key).Error())
+			}
+			u.Object = maps.Merge(original, u.Object)
+
+			str := mustObjectAsStruct(u)
+			tc.req.Observed.Resources[key] = &fnapi.Resource{
+				Resource: str,
 			}
 		}
 	}
